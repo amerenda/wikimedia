@@ -1,0 +1,47 @@
+site_name: Homelab Wiki
+site_description: Internal documentation for apps and infrastructure
+site_author: Alex
+
+theme:
+  name: material
+  palette:
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+
+plugins:
+  - search
+
+nav:
+  - Home: index.md
+  - Infrastructure:
+    - Overview: infra/index.md
+    - k3s Cluster: infra/k3s.md
+    - Mac Mini: infra/mac-mini.md
+    - Networking: infra/networking.md
+    - Storage: infra/storage.md
+  - Apps:
+    - Overview: apps/index.md
+    - Ecdysis: apps/ecdysis.md
+    - LLM Manager: apps/llm-manager.md
+    - Mycroft: apps/mycroft.md
+    - Home Assistant: apps/home-assistant.md
+  - Runbooks:
+    - Overview: runbooks/index.md
+    - etcd Recovery: runbooks/etcd-recovery.md

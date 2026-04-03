@@ -1,0 +1,152 @@
+name: Build and Deploy
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+env:
+  GITOPS_REPO: amerenda/k3s-dean-gitops
+
+jobs:
+  set-tag:
+    runs-on: arc-runner-set
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - name: Set image tag
+        id: tag
+        run: echo "tag=sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+  build-amd64:
+    needs: set-tag
+    runs-on: arc-runner-set
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login to Docker Hub
+        run: echo "${DOCKERHUB_TOKEN}" | docker login -u "${DOCKERHUB_USERNAME}" --password-stdin
+
+      - name: Build and push (amd64)
+        run: |
+          docker build -t "amerenda/wikimedia:${{ needs.set-tag.outputs.tag }}-amd64" .
+          docker push "amerenda/wikimedia:${{ needs.set-tag.outputs.tag }}-amd64"
+
+  build-arm64:
+    needs: set-tag
+    runs-on: [self-hosted, mac-mini]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login to Docker Hub
+        run: echo "${DOCKERHUB_TOKEN}" | docker login -u "${DOCKERHUB_USERNAME}" --password-stdin
+
+      - name: Build and push (arm64)
+        run: |
+          docker build --no-cache -t "amerenda/wikimedia:${{ needs.set-tag.outputs.tag }}-arm64" .
+          docker push "amerenda/wikimedia:${{ needs.set-tag.outputs.tag }}-arm64"
+
+  manifest:
+    needs: [set-tag, build-amd64, build-arm64]
+    runs-on: arc-runner-set
+    steps:
+      - name: Login to Docker Hub
+        run: echo "${DOCKERHUB_TOKEN}" | docker login -u "${DOCKERHUB_USERNAME}" --password-stdin
+
+      - name: Create multi-arch manifest
+        env:
+          TAG: ${{ needs.set-tag.outputs.tag }}
+        run: |
+          docker buildx imagetools create -t "amerenda/wikimedia:${TAG}" \
+            "amerenda/wikimedia:${TAG}-amd64" \
+            "amerenda/wikimedia:${TAG}-arm64"
+          docker buildx imagetools create -t "amerenda/wikimedia:latest" \
+            "amerenda/wikimedia:${TAG}-amd64" \
+            "amerenda/wikimedia:${TAG}-arm64"
+
+  deploy:
+    needs: [set-tag, manifest]
+    runs-on: arc-runner-set
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create deploy PR
+        env:
+          TAG: ${{ needs.set-tag.outputs.tag }}
+        run: |
+          rm -rf /tmp/gitops
+          git clone https://x-access-token:${GITOPS_PAT}@github.com/${GITOPS_REPO}.git /tmp/gitops
+          cd /tmp/gitops
+
+          # Close any existing wikimedia deploy PRs
+          EXISTING_PRS=$(curl -s \
+            -H "Authorization: token ${GITOPS_PAT}" \
+            "https://api.github.com/repos/${GITOPS_REPO}/pulls?state=open&per_page=100" \
+            | python3 -c "
+          import json,sys
+          for pr in json.load(sys.stdin):
+              ref = pr.get('head',{}).get('ref','')
+              if ref.startswith('deploy/wikimedia-'):
+                  print(pr['number'])
+          " 2>/dev/null || true)
+          for PR_NUM in $EXISTING_PRS; do
+            echo "Closing superseded PR #${PR_NUM}"
+            curl -s -X PATCH \
+              -H "Authorization: token ${GITOPS_PAT}" \
+              "https://api.github.com/repos/${GITOPS_REPO}/pulls/${PR_NUM}" \
+              -d '{"state":"closed"}' > /dev/null
+          done
+
+          BRANCH="deploy/wikimedia-${TAG}"
+          git checkout -b "${BRANCH}"
+
+          sed -i "s|image: amerenda/wikimedia:[^ ]*|image: amerenda/wikimedia:${TAG}|g" \
+            apps/wikimedia/deployment.yaml
+
+          git config user.name "amerenda-deploy-bot[bot]"
+          git config user.email "3192609+amerenda-deploy-bot[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet && exit 0
+          git commit -m "deploy: wikimedia ${TAG}"
+          git push origin "${BRANCH}"
+
+          COMMIT_MSG=$(git -C "${GITHUB_WORKSPACE}" log -1 --format='%s' 2>/dev/null || echo "")
+          NL=$'\n'
+          PR_BODY="**wikimedia ${TAG}**${NL}${NL}${COMMIT_MSG}${NL}${NL}Source: https://github.com/amerenda/wikimedia/commit/${GITHUB_SHA}"
+
+          PR_RESPONSE=$(curl -s -X POST \
+            -H "Authorization: token ${GITOPS_PAT}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/repos/${GITOPS_REPO}/pulls" \
+            -d "$(jq -n \
+              --arg title "deploy: wikimedia ${TAG}" \
+              --arg body "${PR_BODY}" \
+              --arg head "${BRANCH}" \
+              --arg base "main" \
+              '{title: $title, body: $body, head: $head, base: $base}')")
+
+          PR_NUMBER=$(echo "$PR_RESPONSE" | python3 -c "import json,sys; print(json.load(sys.stdin)['number'])")
+          curl -s -X POST \
+            -H "Authorization: token ${GITOPS_PAT}" \
+            "https://api.github.com/repos/${GITOPS_REPO}/issues/${PR_NUMBER}/labels" \
+            -d '["deploy:wikimedia"]'
+
+          curl -s -X POST \
+            -H "Authorization: token ${GITOPS_PAT}" \
+            "https://api.github.com/repos/${GITOPS_REPO}/issues/${PR_NUMBER}/assignees" \
+            -d '{"assignees":["amerenda"]}'
+
+  notify-failure:
+    if: failure()
+    needs: [build-amd64, build-arm64, manifest, deploy]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create GitHub Issue for build failure
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue create \
+            --repo "${{ github.repository }}" \
+            --title "CI failed: ${{ github.workflow }}" \
+            --body "Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --label "ci-failure" || echo "Could not create issue"
