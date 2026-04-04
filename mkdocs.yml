@@ -36,6 +36,7 @@ nav:
     - Mac Mini: infra/mac-mini.md
     - Networking: infra/networking.md
     - Storage: infra/storage.md
+    - GitOps Pipeline: infra/gitops.md
     - GitHub Runners: infra/runners.md
   - Apps:
     - Overview: apps/index.md
