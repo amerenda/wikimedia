@@ -132,10 +132,14 @@ Wave 21 → Cluster ingress definitions
 
 ## Adding a New App
 
-1. Create `apps/<app>/` directory with deployment, service, ingress, externalsecret manifests
-2. For UAT: add `apps/<app>/<component>-uat/` with UAT-specific overrides
-3. Add `apps/<app>/<component>-uat` to the UAT ApplicationSet matrix (if UAT wanted)
-4. Add a new ArgoCD Application block in `root-app.yaml`
-5. Add `deploy:<app>` label handling in the app repo's CI workflow
+Use the [App Factory](app-factory.md) — it automates all of this from a single TOML spec:
 
-See [Runners](runners.md) if the app also needs its own CI runner.
+```bash
+cd app-factory
+cp apps/quiz.toml apps/my-app.toml   # edit the spec
+make create-app APP=my-app GITOPS_DIR=../k3s-dean-gitops
+```
+
+This creates the database, BWS secrets, all k8s manifests, ArgoCD registration, ARC runners, and UAT ApplicationSet entry.
+
+See the [App Factory docs](app-factory.md) for the full walkthrough.

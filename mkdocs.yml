@@ -38,6 +38,7 @@ nav:
     - Storage: infra/storage.md
     - Cluster Setup (Ansible): infra/setup.md
     - GitOps Pipeline: infra/gitops.md
+    - App Factory: infra/app-factory.md
     - GitHub Runners: infra/runners.md
   - Apps:
     - Overview: apps/index.md
