@@ -35,11 +35,10 @@ Three repos work together:
 Environment variables:
 
 ```bash
-export BWS_ACCESS_TOKEN="..."         # BWS machine account token
-export AWS_ACCESS_KEY_ID="..."        # GCS HMAC access key (tofu state backend)
-export AWS_SECRET_ACCESS_KEY="..."    # GCS HMAC secret key
-export AWS_S3_ENDPOINT="..."          # GCS S3-compat endpoint
+export BWS_ACCESS_TOKEN="..."   # BWS machine account token (read/write)
 ```
+
+GCS HMAC credentials for the tofu state backend are fetched from BWS automatically by the Makefile.
 
 ### Step 1 — Create the app repo
 
@@ -53,7 +52,7 @@ Edit `.github/workflows/build.yaml` — search for `TODO` and replace `APP_NAME`
 
 ```bash
 cd app-factory
-cp apps/quiz.toml apps/my-app.toml
+cp apps/template.toml.example apps/my-app.toml
 ```
 
 Edit the spec:

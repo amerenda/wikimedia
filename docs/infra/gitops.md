@@ -136,7 +136,7 @@ Use the [App Factory](app-factory.md) — it automates all of this from a single
 
 ```bash
 cd app-factory
-cp apps/quiz.toml apps/my-app.toml   # edit the spec
+cp apps/template.toml.example apps/my-app.toml   # edit the spec
 make create-app APP=my-app GITOPS_DIR=../k3s-dean-gitops
 ```
 
