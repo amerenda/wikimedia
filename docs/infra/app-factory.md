@@ -35,10 +35,9 @@ Three repos work together:
 Environment variables:
 
 ```bash
-export BWS_ACCESS_TOKEN="..."   # BWS machine account token (read/write)
+export BWS_ACCESS_TOKEN="..."       # BWS machine account token (read/write)
+export GOOGLE_CREDENTIALS="..."     # Path to GCS service account key JSON (for tofu state)
 ```
-
-GCS HMAC credentials for the tofu state backend are fetched from BWS automatically by the Makefile.
 
 ### Step 1 — Create the app repo
 
@@ -119,7 +118,7 @@ See [Spec Reference](#spec-reference) below for all fields.
 ### Step 3 — Run the pipeline
 
 ```bash
-make create-app APP=my-app GITOPS_DIR=../k3s-dean-gitops
+make create-app APP=my-app
 ```
 
 This:
@@ -253,11 +252,11 @@ UAT deployments automatically: suffix names with `-uat`, mark secret refs `optio
 
 | Provider | Purpose |
 |----------|---------|
-| `bitwarden/bitwarden-secrets` | Read/write BWS secrets. Reads postgres admin password, creates app secrets. |
-| `cyrilgdn/postgresql` | Creates postgres roles, databases, extensions over the network. |
-| `hashicorp/random` | Generates passwords. |
+| `bitwarden/bitwarden-secrets` (v0.5.4-pre) | Read/write BWS secrets. Reads postgres admin password, creates app secrets. |
+| `cyrilgdn/postgresql` (~1.25) | Creates postgres roles, databases, extensions over the network. |
+| `hashicorp/random` (~3.6) | Generates passwords. |
 
-State is stored in GCS (`amerenda-db-backups` bucket) via S3-compatible backend.
+State is stored in GCS (`amerenda-tofu-state` bucket, prefix `dean/app-factory/`).
 
 ### Manifest Generation
 
