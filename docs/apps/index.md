@@ -9,6 +9,7 @@ Apps deployed across k3s and Mac Mini.
 | Mycroft | k3s | `mycroft.amer.dev/debug` | AI agent platform (coordinator + Argo Workflows) |
 | Home Assistant | Mac Mini | `ha.amer.dev` | Home automation |
 | Vikunja | k3s | `todo.amer.dev` | Self-hosted todo / project management |
+| Sazed | k3s | `reports.amer.dev` / `sazed.amer.dev` | AI research reports viewer |
 | Wiki | k3s | `wiki.amer.dev` | This wiki |
 
 ## Shared Infrastructure

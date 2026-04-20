@@ -46,6 +46,7 @@ nav:
     - LLM Manager: apps/llm-manager.md
     - Mycroft: apps/mycroft.md
     - Home Assistant: apps/home-assistant.md
+    - Sazed (Reports): apps/sazed.md
   - Runbooks:
     - Overview: runbooks/index.md
     - etcd Recovery: runbooks/etcd-recovery.md

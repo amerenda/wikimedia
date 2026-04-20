@@ -1,0 +1,118 @@
+# Sazed
+
+Research reports service — stores and renders AI-generated research output as readable web pages. Part of the Mycroft ecosystem but deployed as an independent service.
+
+- **Repo:** `amerenda/sazed`
+- **URLs:** `reports.amer.dev` / `sazed.amer.dev`
+- **Namespace:** `sazed`
+
+## Purpose
+
+Mycroft's research agents produce structured output (market analyses, technical comparisons, summarized findings). That output needs a home — somewhere it can be rendered nicely, browsed, and revisited. Sazed is that home.
+
+The name comes from the Keeper of Terris in Mistborn — he stores knowledge in metalminds for later retrieval.
+
+## Architecture
+
+```
+Mycroft Coordinator
+    │
+    │  POST /api/reports (title, content, tags, effort)
+    ▼
+Sazed (FastAPI :8000)
+    ├── Stores report in PostgreSQL
+    ├── Renders markdown → HTML (Jinja2 templates)
+    ├── Serves browse UI (htmx for interactivity)
+    └── Tracks read status per report
+         │
+         ▼
+    reports.amer.dev
+    ├── /              Browse: new, updated, all
+    └── /r/{slug}      Read a single report
+```
+
+Sazed is **not agentic** — it doesn't call LLMs or run workflows. It's a content store with a web UI, used *by* agents to persist output.
+
+## How Reports Get Created
+
+1. User asks a research question (Telegram, API, or Ecdysis UI)
+2. Mycroft coordinator dispatches researcher agent (Argo Workflow pod)
+3. Researcher runs searches, reads sources, writes markdown report
+4. Coordinator POSTs the result to `POST /api/reports`
+5. Sazed stores it and makes it available at `reports.amer.dev/r/{slug}`
+6. Coordinator sends Telegram summary with link to the full report
+
+## Browse UI
+
+The landing page at `reports.amer.dev` has three sections:
+
+| Section | Shows | Query |
+|---|---|---|
+| **New Research** | Reports never opened | `viewed_at IS NULL` |
+| **Updated Research** | Reports changed since last viewed | `updated_at > viewed_at` |
+| **All Research** | Everything, newest first | All reports, paginated |
+
+Each report card shows title, summary, tags, effort level, and timestamps. Reports are marked as read when opened.
+
+## Refinement
+
+Each report has a "Refine" button. Clicking it opens a prompt input where you can describe what to improve ("add AMD MI300X benchmarks", "update pricing data", etc.). This sets the report status to `refining` and stores the prompt. The coordinator picks up reports in `refining` status and dispatches them back through the research pipeline.
+
+## API
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /api/reports` | Create a report (used by coordinator) |
+| `GET /api/reports` | List reports (used by agents for context) |
+| `GET /api/reports/{id}` | Get single report (JSON) |
+| `PUT /api/reports/{id}` | Update report content |
+| `DELETE /api/reports/{id}` | Delete report |
+| `POST /api/reports/{id}/view` | Mark as read |
+| `POST /api/reports/{id}/refine` | Request refinement with prompt |
+
+## Tech Stack
+
+| Component | Choice | Why |
+|---|---|---|
+| Framework | FastAPI + Jinja2 | Server-rendered pages, no frontend build step |
+| Interactivity | htmx (vendored, ~14kb) | Lightweight — mark-as-read, refine, filter without full page reloads |
+| Styling | Tailwind CSS (built at image time) | No CDN dependency, built into Docker image via multi-stage build |
+| Markdown | markdown-it-py + Pygments | Server-side rendering with syntax highlighting |
+| Database | PostgreSQL (own DB on agent-kb) | `sazed` database, separate from mycroft's agent-kb tables |
+
+## Database
+
+Own database (`sazed`) on the shared PostgreSQL instance at `agent-kb.amer.dev:5432`. Key columns:
+
+| Column | Purpose |
+|---|---|
+| `id` | URL slug from title |
+| `content` | Markdown (or HTML for rich reports) |
+| `content_type` | `markdown`, `html`, or `notebook` (future) |
+| `summary` | Short text for browse cards + Telegram |
+| `tags` | Array for filtering |
+| `effort` | `light` / `normal` / `heavy` |
+| `status` | `published` / `refining` / `draft` |
+| `viewed_at` | NULL = new, older than `updated_at` = updated |
+| `refine_prompt` | User's refinement instructions |
+
+## Future Plans
+
+- **Drafter agent** — takes raw research output and produces polished reports with better formatting, images, and layout
+- **Interactive charts** — Plotly/ECharts embeds for data-heavy reports (content_type: `html`)
+- **Jupyter notebook rendering** — for reports with inline code and visualizations (content_type: `notebook`)
+- **Asset storage** — PVC for generated images/charts, served via `/assets/{filename}`
+- **Cron-todo integration** — automatic research from Vikunja tasks tagged `ai-research`
+- **Cron-updater** — periodically re-check sources and update existing reports
+
+## Deployment
+
+Standard app-factory pipeline. Single container, no separate frontend.
+
+- **Image:** `amerenda/sazed:backend-{tag}`
+- **Port:** 8000
+- **Replicas:** 2 (prod), 1 (UAT)
+- **Resources:** 50m/128Mi → 200m/256Mi
+- **Secrets:** `sazed-postgres-password` (generated by app-factory, fetched via ExternalSecret)
+
+CI builds multi-arch (amd64 + arm64) on push to `main`, creates deploy PR to `k3s-dean-gitops`.
