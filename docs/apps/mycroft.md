@@ -16,8 +16,9 @@ Coordinator (FastAPI :8080)
     ├── Intent classification (qwen2.5:7b)
     ├── Task CRUD (PostgreSQL)
     ├── Research pipeline orchestration
+    ├── Dynamic pipeline orchestration (custom workflows)
     ├── Argo Workflow submission (k8s API)
-    ├── Sazed report posting (when configured)
+    ├── Report storage (local agent-kb)
     └── Telegram notifications (success only)
             │
             ▼
@@ -45,8 +46,11 @@ FastAPI service managing the full task lifecycle:
 - **Telegram polling** — receives messages, classifies intent, routes to agent type
 - **Task management** — CRUD with concurrency limits per agent type
 - **Research pipeline** — two-phase gather→write for regular/deep research
-- **Argo submission** — creates `WorkflowTemplate` refs via k8s API, monitors completion
-- **Agent Studio UI** — `mycroft.amer.dev` — task runner, reports, model selection, advanced options
+- **Dynamic pipeline** — multi-step pipelines defined in the Workflows editor
+- **Argo submission** — creates inline workflow specs via k8s API, monitors completion
+- **Report store** — saves agent reports to local agent-kb (`reports` table)
+- **Agent Studio UI** — `mycroft.amer.dev` — full platform control
+- **In-memory log buffer** — 2000-record ring buffer exposed at `/api/logs`
 - **Prometheus metrics** — `/metrics` endpoint, scraped by Prometheus
 
 ### Agent Runtime
@@ -74,6 +78,7 @@ PostgreSQL + pgvector on Mac Mini. All agent I/O goes through scoped paths:
 | `/agents/{type}/results/{task_id}` | Final output |
 | `/notifications/alex/{task_id}` | Errors / alerts (logged, not sent to Telegram) |
 | `/research`, `/wiki` | Shared read-only context |
+| `/skills/` | *(planned)* Shared skill knowledge blocks |
 
 Vector search: `all-MiniLM-L6-v2` (384-dim).
 
@@ -118,7 +123,7 @@ Phase-based protocol: Understand (clone, read) → Implement (patch, write) → 
 
 #### Research Pipeline (regular/deep tiers)
 
-Two-phase Argo DAG — each phase is a separate task:
+Two-phase orchestration — each phase is a separate task:
 
 ```
 Phase 1: GATHERER (qwen3.5:9b)
@@ -184,13 +189,66 @@ Tool schemas are versioned in agent-kb (`tool_schemas` table) with CRUD API at `
 
 ## Agent Studio UI
 
-Web interface at `mycroft.amer.dev`:
+Web interface at `mycroft.amer.dev`. Six tabs:
 
-- **Test Runner** — select agent type (coder/researcher), model, effort level, advanced options (max_tokens, temperature, max_iterations)
-- **Reports** — browse research reports with markdown rendering
-- **Tasks** — list, view conversations, delete
+### Test Runner
 
-Runner dropdown: Mycroft (default) or Forge (legacy, for comparison).
+Submit tasks and watch them execute live.
+
+- **Runner toggle** — Mycroft (default) or Forge
+- **Workflow select** — `research-quick`, `research-regular`, `research-deep`, `coder`, or any custom pipeline
+- **Advanced options** — max_tokens, temperature, max_iterations, per-phase model overrides, tool allowlist, system prompt override
+- **Trace sub-tab** — live collapsible cards for every tool call, LLM response, and system prompt as the task runs
+- **Tasks sub-tab** — list recent tasks with status badges; click to open conversation panel; cross-links to reports
+
+### Agents
+
+Create and edit agent definitions without touching the repo.
+
+- Model, max iterations, memory/CPU resource requests
+- System prompt editor
+- Filesystem permissions (read/write path lists)
+- Raw `manifest.yaml` and `prompts.py` editors
+- Clone agent, delete agent
+- **Test Agent** panel — run the agent in isolation with a custom instruction
+
+Changes saved to agent-kb; the coordinator picks them up immediately.
+
+### Workflows
+
+Build multi-step pipelines (custom research flows, chained agent sequences).
+
+- Add/reorder/remove pipeline steps
+- Per-step agent, model override, max iterations, tool override, prompt override
+- Run or Test (2-iteration quick run) directly from the editor
+- **Run history** — recent executions with timing and status
+
+### Tools
+
+Manage tool schemas in OpenAI function-calling format.
+
+- Create, edit, delete tool schemas
+- Semver labels + integer DB version auto-increment on each save
+- Changelog field per version
+- Full version history
+
+### Reports
+
+Browse AI-generated research reports.
+
+- Markdown-rendered or raw view toggle
+- Metadata: workflow tier, models used, build SHA, creation date
+- **View trace ↗** — one click to jump to the Test Runner Trace sub-tab showing the full system prompt, tool calls, and LLM responses that produced the report
+- Mobile: toggle bar to switch between report list and detail view
+
+### Logs
+
+Live coordinator log stream.
+
+- Auto-refreshes every 3 seconds while the tab is active
+- **Filters:** log level (DEBUG/INFO/WARNING/ERROR), logger name prefix, free text search
+- Color-coded by level, auto-scroll to newest
+- Reads from `/api/logs` (in-memory 2000-record ring buffer in coordinator)
 
 ## Images
 
@@ -201,8 +259,43 @@ Built multi-arch (amd64 + arm64) on every push to `main`:
 | `amerenda/mycroft:agent-base-{tag}` | Shared base — Python deps, tools, runtime | ~300MB |
 | `amerenda/mycroft:agent-coder-{tag}` | Extends base — Node.js, gh CLI, pytest | ~400MB |
 | `amerenda/mycroft:agent-researcher-{tag}` | Extends base — crawl4ai, Playwright, trafilatura | ~1GB |
-| `amerenda/mycroft:coordinator-{tag}` | Coordinator service + Forge binary | ~500MB |
+| `amerenda/mycroft:coordinator-{tag}` | Coordinator service | ~500MB |
 | `amerenda/mycroft:frontend-{tag}` | Agent Studio nginx SPA | ~30MB |
+
+## API Reference
+
+Key coordinator endpoints:
+
+```
+POST   /api/tasks                     submit a task
+GET    /api/tasks                     list tasks (agent_type, status, limit filters)
+GET    /api/tasks/{id}                get task
+GET    /api/tasks/{id}/conversation   full conversation (messages + tool calls)
+POST   /api/tasks/{id}/cancel         cancel running task
+DELETE /api/tasks/{id}                delete task
+
+GET    /api/events                    SSE stream — task_update and report_saved events
+
+GET    /api/logs                      coordinator log buffer
+                                      ?level=INFO&logger=coordinator&q=text&since=ts&limit=500
+
+GET    /api/reports                   list reports
+GET    /api/reports/{id}              get report
+DELETE /api/reports/{id}              delete report
+
+GET    /api/agents                    list agents (from DB)
+GET    /api/agents/{name}             get agent manifest + prompts
+PUT    /api/agents/{name}             save agent
+
+GET    /api/workflows                 list workflows
+PUT    /api/workflows/{name}          save workflow (with pipeline_json)
+GET    /api/workflows/{name}/runs     recent task runs for a workflow
+
+GET    /api/tools/schemas             list tool schemas
+PUT    /api/tools/schemas/{name}      upsert schema (auto-increments DB version)
+
+GET    /api/models                    proxy to llm-manager model list
+```
 
 ## Prometheus Metrics
 
