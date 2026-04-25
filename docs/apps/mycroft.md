@@ -52,33 +52,68 @@ FastAPI service managing the full task lifecycle:
 - **Agent Studio UI** — `mycroft.amer.dev` — full platform control
 - **In-memory log buffer** — 2000-record ring buffer exposed at `/api/logs`
 - **Prometheus metrics** — `/metrics` endpoint, scraped by Prometheus
+- **KB cleanup** — hourly background task deletes expired short-term records
 
 ### Agent Runtime
 
 Thin loop (~250 lines) running inside each ephemeral workflow pod:
 
-1. Read task instruction + config from KB
+1. Read task instruction + config from KB inbox
 2. Vector-search KB for relevant context (top 5 results)
 3. Build system prompt from agent manifest + effort-specific supplement
-4. Iterate: LLM → tool calls → results → persist conversation → repeat
-5. Write result to `/agents/{type}/results/{task_id}`
+4. Optionally append `system_suffix` from pipeline step config
+5. Inject pipeline framing + context (original brief, prior step output) into first user message
+6. Iterate: LLM → tool calls → results → persist conversation → repeat
+7. Write result to `/agents/{type}/results/{task_id}`
 
 **Iteration limits:** per-task configurable from UI/API, capped globally at 30.
 **Resume safety:** conversation persisted to KB after each tool-call round.
-**Tools override:** pipeline phases can restrict tool sets (e.g., gatherer has no write_file).
+**Tools override:** pipeline phases can restrict tool sets per step.
 
 ### Knowledge Base (KB)
 
-PostgreSQL + pgvector on Mac Mini. All agent I/O goes through scoped paths:
+PostgreSQL + pgvector on Mac Mini (`agent-kb` database). All agent I/O uses scoped path strings. The KB client enforces per-agent read/write permission lists based on path prefixes.
 
-| Path pattern | Purpose |
-|---|---|
-| `/agents/{type}/inbox/{task_id}` | Task instructions |
-| `/tasks/{task_id}/conversation` | Conversation history (JSON) |
-| `/agents/{type}/results/{task_id}` | Final output |
-| `/notifications/alex/{task_id}` | Errors / alerts (logged, not sent to Telegram) |
-| `/research`, `/wiki` | Shared read-only context |
-| `/skills/` | *(planned)* Shared skill knowledge blocks |
+#### Memory Tiers
+
+| Tier | TTL | Where | Purpose |
+|---|---|---|---|
+| **Short-term** | 7 days | `/runs/{run_id}/` | Pipeline run data — original brief, step outputs, scratch |
+| **Long-term** | Permanent | `/agents/*/results/`, `/tasks/`, `/research/`, `/wiki/` | Task results, conversation history, shared knowledge |
+
+Short-term records carry an `expires_at` timestamp. The coordinator runs hourly cleanup (`DELETE WHERE expires_at < NOW()`). The `ensure_schema()` call at startup idempotently adds the `expires_at TIMESTAMPTZ` column if it doesn't exist.
+
+#### Path Reference
+
+| Path pattern | TTL | Purpose |
+|---|---|---|
+| `/agents/{type}/inbox/{task_id}` | Long | Task instructions written by coordinator |
+| `/tasks/{task_id}/conversation` | Long | Full conversation history (JSON, persisted each iteration) |
+| `/agents/{type}/results/{task_id}` | Long | Final agent output |
+| `/notifications/alex/{task_id}` | Long | Errors / alerts (logged, not sent to Telegram) |
+| `/runs/{run_id}/original` | 7 days | Original user request for this pipeline run |
+| `/runs/{run_id}/step-{n}/output` | 7 days | Full output of pipeline step N |
+| `/runs/{run_id}/scratch` | 7 days | Shared notepad — all agents in the run can read/write |
+| `/research`, `/wiki` | Long | Shared read-only reference context |
+| `/skills/` | Long | *(planned)* Shared skill knowledge blocks |
+
+#### Permission Model
+
+Agents declare `read` and `write` path prefix lists in their manifest. The KB client enforces these on every operation. Two exceptions:
+
+- **`/runs/`** — always readable and writable by all agents regardless of manifest (all pipeline agents need shared run data without per-manifest configuration)
+- **Coordinator** — has full access with no permission checks (passes `permissions=None`)
+
+`get_unchecked(scope)` bypasses permission checks entirely — used by the agent runtime to read coordinator-written `context_injection` scopes on startup.
+
+#### Scratch Space
+
+All agents in a pipeline share a scratch record at `/runs/{run_id}/scratch`. Two tools are auto-injected for pipeline agents:
+
+- **`scratch_read`** — returns current scratch content (or `"(scratch is empty)"`)
+- **`scratch_write`** — overwrites scratch entirely; include anything you want to preserve
+
+Scratch uses direct asyncpg connections (no KB client permission layer). Both tools open and close a connection per call. Overwrite semantics — last write wins — so scratch is best for coordination flags and mid-run notes, not full data dumps. Full step output is in `/runs/{run_id}/step-{n}/output` and doesn't get overwritten.
 
 Vector search: `all-MiniLM-L6-v2` (384-dim).
 
@@ -97,6 +132,90 @@ All inference goes through llm-manager's job queue:
 2. Poll `/api/queue/jobs/{job_id}` until terminal state (10-min timeout)
 3. Parse OpenAI-compatible response (content + tool_calls)
 4. `max_tokens=4096` default (thinking models need headroom)
+
+## Pipelines
+
+### How Context Flows Between Steps
+
+Context does **not** travel through Argo Workflow arguments — Argo only carries a tiny `instruction` string. All real context lives in the KB under `/runs/{run_id}/`.
+
+Before the first LLM call, each pipeline agent receives a structured framing block prepended to its user message:
+
+```
+You are one step in a multi-step pipeline. Workflow: <name>.
+Your role in this step: <step description from workflow editor>
+
+---
+
+The original user request — stay aligned with this throughout:
+<content of /runs/{run_id}/original>
+
+---
+
+[CONTEXT: STEP-0/OUTPUT]
+<content of /runs/{run_id}/step-0/output>
+
+---
+
+<current step instruction>
+```
+
+This means every agent in a pipeline always sees:
+1. The original user request verbatim (no telephone effect)
+2. The immediately prior step's full output (no coordinator-side truncation)
+3. Its specific role in the pipeline
+
+The coordinator writes each completed step's output to `/runs/{run_id}/step-{n}/output` (7-day TTL) before launching the next step. These scopes are passed in `context_injection` in the task config.
+
+### Research Pipeline (built-in)
+
+Two-phase orchestration for `research-regular` and `research-deep` workflows:
+
+```
+Phase 1: GATHERER
+  ├── web_search via SearXNG
+  ├── web_read (crawl4ai → trafilatura → markdownify → basic)
+  │   └── Pages >5000 chars summarized by qwen2.5:7b
+  ├── wiki_read (Wikipedia REST API)
+  └── Output written to /runs/{run_id}/step-0/output (7d TTL)
+
+Coordinator launches Phase 2 with context_injection pointing at both
+/runs/{run_id}/original and /runs/{run_id}/gather/output
+
+Phase 2: WRITER
+  ├── Receives original brief + full gatherer output in context
+  ├── write_file → /workspace/report.md
+  └── Cannot search — only writes
+```
+
+#### Effort Tiers
+
+| Tier | Gather iterations | Writer iterations | Behavior |
+|---|---|---|---|
+| **Light** | 2 (single task) | 0 | Quick search, respond directly to Telegram. No report. |
+| **Regular** | 5 | 3 | Multi-source research → structured report |
+| **Deep** | 8 | 5 | Comprehensive research → adversarial review → report |
+
+#### Web Content Extraction
+
+Four-tier fallback for `web_read`:
+
+1. **crawl4ai** — headless browser + markdown (researcher image only)
+2. **trafilatura** — content extraction from raw HTML (no browser)
+3. **markdownify** — HTML → markdown conversion
+4. **basic regex** — strip scripts/styles/nav, then all tags
+
+### Dynamic Pipelines (custom workflows)
+
+Multi-step pipelines defined in the Workflows editor. The coordinator:
+
+1. Generates a `run_id` and writes the original brief to `/runs/{run_id}/original` (7d TTL)
+2. Creates `/runs/{run_id}/scratch` (empty, 7d TTL) for shared agent notepad
+3. Launches step 0 with `context_injection: [original_scope]`
+4. Waits for each step to complete, mirrors output to `/runs/{run_id}/step-{n}/output`
+5. Launches next step with `context_injection: [original_scope, step-n/output]`
+
+Each step's task config also carries `scratch_scope` so the runner auto-injects `scratch_read`/`scratch_write` tools.
 
 ## Agents
 
@@ -121,51 +240,6 @@ Phase-based protocol: Understand (clone, read) → Implement (patch, write) → 
 | Tools | web_search, web_read, wiki_read, run_command (gather) / write_file, read_file (write) |
 | Triggers | Telegram (`intent: research`), API, Agent Studio |
 
-#### Research Pipeline (regular/deep tiers)
-
-Two-phase orchestration — each phase is a separate task:
-
-```
-Phase 1: GATHERER (qwen3.5:9b)
-  ├── web_search via SearXNG (real results, no CAPTCHAs)
-  ├── web_read (crawl4ai → trafilatura → markdownify → basic)
-  │   └── Large pages summarized by qwen2.5:7b (OpenClaude pattern)
-  ├── wiki_read (Wikipedia REST API, clean JSON)
-  └── Exits naturally when model responds with text
-  
-Coordinator captures findings, launches Phase 2
-
-Phase 2: WRITER (llama3.1:8b)
-  ├── Receives all gatherer findings as input
-  ├── write_file → /workspace/report.md
-  └── Cannot search — only writes
-```
-
-#### Effort Tiers
-
-| Tier | Gather iterations | Writer iterations | Behavior |
-|---|---|---|---|
-| **Light** | 2 (single task) | 0 | Quick search, respond directly to Telegram. No report. |
-| **Regular** | 5 | 3 | Multi-source research → structured report |
-| **Deep** | 8 | 5 | Comprehensive research → adversarial review → report |
-
-#### Web Content Extraction
-
-Four-tier fallback for `web_read`:
-
-1. **crawl4ai** — headless browser + markdown (researcher image only)
-2. **trafilatura** — content extraction from raw HTML (no browser)
-3. **markdownify** — HTML → markdown conversion
-4. **basic regex** — strip scripts/styles/nav, then all tags
-
-Pages >5000 chars are automatically summarized by `qwen2.5:7b` before being returned to the research model. This prevents context pollution from raw HTML.
-
-#### Knowledge Cutoff Awareness
-
-The researcher prompt explicitly addresses training data staleness:
-
-> "Your job is to discover the present, not recall the past. If you think something doesn't exist yet — search for it. You're probably wrong."
-
 ### Planned Agents
 
 | Agent | Purpose | Status |
@@ -184,6 +258,7 @@ The researcher prompt explicitly addresses training data staleness:
 | `git` | clone, checkout-branch, add, commit, push, diff | Coder |
 | `github` | create-pr, comment | Coder |
 | `shell` | run_command (bash, 120s timeout) | Coder, Researcher |
+| `kb` (pipeline only) | scratch_read, scratch_write | Auto-injected for all pipeline agents with a `scratch_scope` |
 
 Tool schemas are versioned in agent-kb (`tool_schemas` table) with CRUD API at `/api/tools/schemas`.
 
@@ -207,7 +282,7 @@ Create and edit agent definitions without touching the repo.
 
 - Model, max iterations, memory/CPU resource requests
 - System prompt editor
-- Filesystem permissions (read/write path lists)
+- **Permissions & Tools** — tool group checkboxes (web, files, git, github, shell) plus extra individual tools; read/write KB path lists
 - Raw `manifest.yaml` and `prompts.py` editors
 - Clone agent, delete agent
 - **Test Agent** panel — run the agent in isolation with a custom instruction
@@ -218,8 +293,19 @@ Changes saved to agent-kb; the coordinator picks them up immediately.
 
 Build multi-step pipelines (custom research flows, chained agent sequences).
 
-- Add/reorder/remove pipeline steps
-- Per-step agent, model override, max iterations, tool override, prompt override
+Per-step configuration:
+
+| Field | Purpose |
+|---|---|
+| **Step Description** | Why this step exists — injected into the agent's pipeline framing so it knows its role |
+| Agent | Which agent type runs this step |
+| Model Override | Override the agent's default model for this step |
+| Max Iter | Cap iterations for this step only |
+| Tools Override | Comma-separated tool list; replaces agent defaults |
+| **System Prompt Suffix** | Appended to the agent's default system prompt — use for output format rules or step-specific constraints without replacing the full prompt |
+| **⚠ System Prompt Override** | Replaces the agent's entire system prompt — use sparingly; agent loses all default behavior |
+
+- Add/reorder/remove steps
 - Run or Test (2-iteration quick run) directly from the editor
 - **Run history** — recent executions with timing and status
 
@@ -271,6 +357,7 @@ POST   /api/tasks                     submit a task
 GET    /api/tasks                     list tasks (agent_type, status, limit filters)
 GET    /api/tasks/{id}                get task
 GET    /api/tasks/{id}/conversation   full conversation (messages + tool calls)
+GET    /api/tasks/{id}/pipeline       all tasks in the same pipeline chain
 POST   /api/tasks/{id}/cancel         cancel running task
 DELETE /api/tasks/{id}                delete task
 
@@ -293,6 +380,12 @@ GET    /api/workflows/{name}/runs     recent task runs for a workflow
 
 GET    /api/tools/schemas             list tool schemas
 PUT    /api/tools/schemas/{name}      upsert schema (auto-increments DB version)
+
+GET    /api/kb/children               list KB path children
+GET    /api/kb/entry?path=            get KB record at exact scope
+PUT    /api/kb/entry                  write/replace KB record
+DELETE /api/kb/entry?path=            delete records at scope
+DELETE /api/kb/subtree?path=          delete all records under prefix
 
 GET    /api/models                    proxy to llm-manager model list
 ```
