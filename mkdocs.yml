@@ -45,6 +45,7 @@ nav:
     - Ecdysis: apps/ecdysis.md
     - LLM Manager: apps/llm-manager.md
     - Mycroft: apps/mycroft.md
+    - Agent KB: apps/agent-kb.md
     - Home Assistant: apps/home-assistant.md
     - Sazed (Reports): apps/sazed.md
   - Runbooks:

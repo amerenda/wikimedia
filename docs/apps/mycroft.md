@@ -74,6 +74,9 @@ Thin loop (~250 lines) running inside each ephemeral workflow pod:
 
 PostgreSQL + pgvector on Mac Mini (`agent-kb` database). All agent I/O uses scoped path strings. The KB client enforces per-agent read/write permission lists based on path prefixes.
 
+!!! info "Full KB documentation"
+    See the dedicated **[Agent KB](agent-kb.md)** page for the complete scope path reference, context injection mechanics, KB client API, permission model, and guidance on writing agent prompts correctly.
+
 #### Memory Tiers
 
 | Tier | TTL | Where | Purpose |
