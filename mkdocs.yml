@@ -28,6 +28,20 @@ theme:
 plugins:
   - search
 
+markdown_extensions:
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - admonition
+  - pymdownx.details
+  - attr_list
+  - md_in_html
+
 nav:
   - Home: index.md
   - Infrastructure:
@@ -45,6 +59,7 @@ nav:
     - Ecdysis: apps/ecdysis.md
     - LLM Manager: apps/llm-manager.md
     - Mycroft: apps/mycroft.md
+    - Mycroft — Prompt Construction: apps/mycroft-prompts.md
     - Agent KB: apps/agent-kb.md
     - Home Assistant: apps/home-assistant.md
     - Sazed (Reports): apps/sazed.md
