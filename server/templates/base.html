@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>{% block title %}{{ site_name }}{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Roboto+Mono:wght@400&display=swap" rel="stylesheet"/>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css"/>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    :root {
+      --md-primary: #3f51b5;
+      --md-bg: #1e1e1e;
+      --md-surface: #2d2d2d;
+      --md-text: #e0e0e0;
+      --md-muted: #9e9e9e;
+      --md-link: #8c9eff;
+      --md-border: #404040;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Roboto, system-ui, sans-serif;
+      background: var(--md-bg);
+      color: var(--md-text);
+      line-height: 1.6;
+      display: flex;
+      min-height: 100vh;
+    }
+    .sidebar {
+      width: 16.5rem;
+      flex-shrink: 0;
+      background: var(--md-surface);
+      border-right: 1px solid var(--md-border);
+      padding: 1rem 0.75rem;
+      overflow-y: auto;
+      position: sticky;
+      top: 0;
+      align-self: flex-start;
+      max-height: 100vh;
+    }
+    .sidebar h2 {
+      margin: 0 0 0.5rem 0.5rem;
+      font-size: 0.7rem;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--md-muted);
+    }
+    .sidebar a.site-title {
+      display: block;
+      font-weight: 700;
+      font-size: 1rem;
+      color: var(--md-text);
+      text-decoration: none;
+      padding: 0.5rem;
+      margin-bottom: 1rem;
+      border-bottom: 1px solid var(--md-border);
+    }
+    .sidebar a.site-title span { color: var(--md-primary); }
+    .sidebar ul {
+      list-style: none;
+      margin: 0 0 1rem 0;
+      padding: 0;
+    }
+    .sidebar li a {
+      display: block;
+      padding: 0.35rem 0.5rem;
+      border-radius: 4px;
+      color: var(--md-text);
+      text-decoration: none;
+      font-size: 0.875rem;
+    }
+    .sidebar li a:hover { background: rgba(255,255,255,0.06); }
+    .sidebar li a.active {
+      background: rgba(63, 81, 181, 0.25);
+      color: var(--md-link);
+    }
+    main {
+      flex: 1;
+      padding: 1.5rem 2rem 3rem;
+      max-width: 48rem;
+    }
+    .md-content a { color: var(--md-link); }
+    .md-content pre {
+      background: #1a1a1a;
+      border: 1px solid var(--md-border);
+      border-radius: 6px;
+      padding: 1rem;
+      overflow-x: auto;
+      font-family: "Roboto Mono", monospace;
+      font-size: 0.85rem;
+    }
+    .md-content code {
+      font-family: "Roboto Mono", monospace;
+      background: rgba(255,255,255,0.08);
+      padding: 0.15em 0.4em;
+      border-radius: 4px;
+      font-size: 0.9em;
+    }
+    .md-content pre code { background: none; padding: 0; }
+    .md-content table {
+      border-collapse: collapse;
+      width: 100%;
+      margin: 1rem 0;
+    }
+    .md-content th, .md-content td {
+      border: 1px solid var(--md-border);
+      padding: 0.5rem 0.75rem;
+      text-align: left;
+    }
+    .md-content th { background: var(--md-surface); }
+    .admonition {
+      border-radius: 4px;
+      padding: 0.5rem 1rem;
+      margin: 1rem 0;
+      border-left: 4px solid var(--md-primary);
+      background: rgba(63, 81, 181, 0.12);
+    }
+    .admonition-title { font-weight: 700; margin-bottom: 0.25rem; }
+    @media (max-width: 768px) {
+      body { flex-direction: column; }
+      .sidebar { width: 100%; max-height: none; position: relative; }
+    }
+  </style>
+</head>
+<body>
+  <aside class="sidebar">
+    <a class="site-title" href="/wiki/index.md"><span>{{ site_name }}</span></a>
+    {% for section in nav %}
+      {% if section.name %}
+        <h2>{{ section.name }}</h2>
+      {% endif %}
+      <ul>
+        {% for p in section.pages %}
+          <li>
+            <a href="/wiki/{{ p.path }}" class="{{ 'active' if p.path == current_path else '' }}">{{ p.label }}</a>
+          </li>
+        {% endfor %}
+      </ul>
+    {% endfor %}
+  </aside>
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+  <script>
+    mermaid.initialize({ startOnLoad: true, theme: "dark" });
+    document.addEventListener("DOMContentLoaded", function () {
+      mermaid.run({ querySelector: ".mermaid" });
+    });
+  </script>
+</body>
+</html>

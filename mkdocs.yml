@@ -1,3 +1,10 @@
+# ------------------------------------------------------------------------------
+# Nav + docs/ are the source of truth for importing into Postgres:
+#   export DATABASE_URL=postgresql://wikimedia:…@postgres:5432/wikimedia
+#   python scripts/import_from_repo.py
+# Live site: FastAPI server (Dockerfile / compose.yaml) reads wiki_pages.
+# Optional: `mkdocs build` still produces a static site from docs/ if needed.
+# ------------------------------------------------------------------------------
 site_name: Homelab Wiki
 site_description: Internal documentation for apps and infrastructure
 site_author: Alex

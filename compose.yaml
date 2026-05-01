@@ -1,0 +1,19 @@
+# Run the wiki on the Mac Mini next to core/postgres (network mac-mini-shared).
+# Set DATABASE_URL in .env — see .env.example
+services:
+  wikimedia:
+    build: .
+    container_name: wikimedia
+    restart: unless-stopped
+    ports:
+      - "8765:8000"
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      WIKI_SITE_NAME: ${WIKI_SITE_NAME:-Homelab Wiki}
+    networks:
+      - mac-mini-shared
+
+networks:
+  mac-mini-shared:
+    external: true
+    name: mac-mini-shared
