@@ -9,6 +9,15 @@ import yaml
 from server.db import get_dsn
 
 
+def _nav_yaml_snippet(mkdocs_text: str) -> str:
+    """mkdocs.yml uses !!python/name: tags elsewhere; only the nav tree is plain YAML."""
+    lines = mkdocs_text.splitlines()
+    for i, line in enumerate(lines):
+        if line.strip().startswith("nav:"):
+            return "\n".join(lines[i:])
+    raise ValueError("mkdocs.yml has no nav: section")
+
+
 def walk_nav(items: list, section: str = "") -> list[tuple[str, str, str]]:
     """Return (path, nav_label, nav_section) in nav order."""
     out: list[tuple[str, str, str]] = []
@@ -29,8 +38,9 @@ def import_from_repo(repo_root: Path) -> int:
     docs_dir = repo_root / "docs"
     if not mkdocs_path.is_file():
         raise FileNotFoundError(f"Missing {mkdocs_path}")
-    cfg = yaml.safe_load(mkdocs_path.read_text())
-    nav = cfg.get("nav") or []
+    nav_only = _nav_yaml_snippet(mkdocs_path.read_text())
+    cfg = yaml.safe_load(nav_only)
+    nav = (cfg or {}).get("nav") or []
     entries = walk_nav(nav)
     dsn = get_dsn()
     count = 0
