@@ -1,10 +1,6 @@
 .git
 .github
-docs
-mkdocs.yml
 scripts
 compose.yaml
 .env
 .env.*
-*.md
-!server/**/*.md

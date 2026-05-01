@@ -9,6 +9,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from server.db import apply_schema, get_dsn
 from server.render import markdown_to_html
+from server.seed import seed_if_empty
 
 _templates = Environment(
     loader=FileSystemLoader(Path(__file__).parent / "templates"),
@@ -16,9 +17,14 @@ _templates = Environment(
 )
 
 
+def _bundled_repo_root() -> Path:
+    return Path(os.environ.get("WIKIMEDIA_REPO_ROOT", "/app/repo"))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     apply_schema()
+    seed_if_empty(_bundled_repo_root())
     yield
 
 
